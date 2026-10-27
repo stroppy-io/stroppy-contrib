@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile]
+        example: [select1, selectfile, go-tpc-tpcc]
     defaults:
       run:
         working-directory: ${{ matrix.example }}
@@ -29,9 +29,13 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
       - name: Run against noop
+        if: matrix.example != 'go-tpc-tpcc'
         run: go run . -d noop --iterations 2
+      - name: Inspect go-tpc parameters
+        if: matrix.example == 'go-tpc-tpcc'
+        run: go run . --help
 
   contract:
     name: ${{ matrix.example }} (Stroppy main)
@@ -40,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile]
+        example: [select1, selectfile, go-tpc-tpcc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -63,4 +67,55 @@ jobs:
           go mod edit -replace github.com/stroppy-io/stroppy/v6="$GITHUB_WORKSPACE/stroppy-main"
           go build -mod=mod ./...
           go test -mod=mod ./...
-          go run -mod=mod . -d noop --iterations 1
+          if [ "${{ matrix.example }}" = go-tpc-tpcc ]; then
+            go run -mod=mod . --help
+          else
+            go run -mod=mod . -d noop --iterations 1
+          fi
+
+  go-tpc-databases:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [mysql, postgres]
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: gotpc
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pgotpc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: gotpc
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: go-tpc-tpcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: go-tpc-tpcc/go.sum
+      - name: Check pinned loader and transaction fingerprints
+        env:
+          GO_TPC_TEST_DRIVER: ${{ matrix.driver }}
+        run: |
+          if [ "$GO_TPC_TEST_DRIVER" = mysql ]; then
+            export GO_TPC_TEST_DSN='root:gotpc@tcp(localhost:3306)/mysql'
+          else
+            export GO_TPC_TEST_DSN='postgres://postgres:gotpc@localhost:5432/postgres?sslmode=disable'
+          fi
+          go test -race -tags=integration ./workload -run '^TestDatabaseProfiles$'

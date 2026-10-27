@@ -1,0 +1,27 @@
+package tpcc
+
+import (
+ "context"
+ "database/sql"
+ "math/rand"
+ "os"
+ "testing"
+ "time"
+ _ "github.com/go-sql-driver/mysql"
+ _ "github.com/lib/pq"
+)
+
+func TestContribOracle(t *testing.T) {
+ driver,dsn:=os.Getenv("GO_TPC_DRIVER"),os.Getenv("GO_TPC_DSN")
+ if dsn==""{t.Fatal("GO_TPC_DSN required")}
+ db,err:=sql.Open(driver,dsn);if err!=nil{t.Fatal(err)};defer db.Close()
+ c:=&Config{Driver:driver,Threads:1,Warehouses:2,Parts:1,PartitionType:PartitionTypeHash,Weight:[]int{45,43,4,4,4},MaxMeasureLatency:time.Minute,PrepareRetryCount:0}
+ if os.Getenv("GO_TPC_ONE_WAREHOUSE")=="true"{c.Warehouses=1}
+ base:=rand.New(rand.NewSource(1));cLoad=base.Intn(256);cItemID=base.Intn(1024);cCustomerID=base.Intn(8192)
+ constructor,err:=NewWorkloader(db,c);if err!=nil{t.Fatal(err)}
+ w:=constructor.(*Workloader);w.initLoadTime="2020-01-02 03:04:05"
+ ctx:=w.InitThread(context.Background(),0);defer w.CleanupThread(ctx,0)
+ s:=getTPCCState(ctx);s.R=rand.New(rand.NewSource(1));oracleGlobal=rand.New(rand.NewSource(1))
+ if os.Getenv("GO_TPC_ACTION")=="prepare"{if err:=w.Prepare(ctx,0);err!=nil{t.Fatal(err)};return}
+ for range 100 {if err:=w.Run(ctx,0);err!=nil{t.Fatal(err)}}
+}

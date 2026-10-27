@@ -1,0 +1,10 @@
+go-tpc-derived TPC-C workload
+
+Derived from pingcap/go-tpc, commit a9ca4818625deef91ff80f6c395a575ccae22b7c.
+Upstream: https://github.com/pingcap/go-tpc
+License: Apache License 2.0; see LICENSE.
+
+Transaction, SQL, DDL, generator, consistency checks, and load ordering originate
+from tpcc/*.go. SDK adapters replace database/sql calls and upstream orchestration.
+Mechanically adapted source copies retain the upstream_* filename prefix.
+Regenerate with tools/port.py against the pinned checkout.
