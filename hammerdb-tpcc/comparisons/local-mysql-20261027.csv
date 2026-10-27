@@ -1,0 +1,13 @@
+series,run,profile,client,nopm,tpm,reported_sql_errors
+initial,1,text,hammerdb,20605,47445,0
+initial,1,text,stroppy,10830,24455,0
+initial,1,prepared,stroppy,10995,25055,0
+initial,1,prepared,hammerdb,18525,42620,0
+initial,2,text,stroppy,8080,18370,0
+initial,2,text,hammerdb,11925,27240,0
+initial,2,prepared,hammerdb,11475,26065,0
+initial,2,prepared,stroppy,27780,63555,0
+settled,1,text,hammerdb,6630,15465,0
+settled,1,text,stroppy,27615,64185,0
+settled,2,text,stroppy,10405,23385,0
+settled,2,text,hammerdb,8240,18970,0

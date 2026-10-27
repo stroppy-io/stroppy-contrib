@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile]
+        example: [select1, selectfile, hammerdb-tpcc]
     defaults:
       run:
         working-directory: ${{ matrix.example }}
@@ -28,10 +28,17 @@ jobs:
           cache-dependency-path: ${{ matrix.example }}/go.sum
       - name: Build
         run: go build ./...
+      - name: Install Tcl generator oracle
+        if: matrix.example == 'hammerdb-tpcc'
+        run: sudo apt-get update -qq && sudo apt-get install -y tcl
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
       - name: Run against noop
+        if: matrix.example != 'hammerdb-tpcc'
         run: go run . -d noop --iterations 2
+      - name: Inspect HammerDB workload parameters
+        if: matrix.example == 'hammerdb-tpcc'
+        run: go run . --help
 
   contract:
     name: ${{ matrix.example }} (Stroppy main)
@@ -40,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [select1, selectfile]
+        example: [select1, selectfile, hammerdb-tpcc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -63,4 +70,62 @@ jobs:
           go mod edit -replace github.com/stroppy-io/stroppy/v6="$GITHUB_WORKSPACE/stroppy-main"
           go build -mod=mod ./...
           go test -mod=mod ./...
-          go run -mod=mod . -d noop --iterations 1
+          if [ "${{ matrix.example }}" = hammerdb-tpcc ]; then
+            go run -mod=mod . --help
+          else
+            go run -mod=mod . -d noop --iterations 1
+          fi
+
+  hammerdb-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: hammerdb
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: hammerdb-tpcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: hammerdb-tpcc/go.sum
+      - name: Run PostgreSQL profiles
+        env:
+          HAMMERDB_PG_URL: host=localhost port=5432 user=postgres password=hammerdb dbname=postgres sslmode=disable
+        run: go test -race -tags=integration ./workload -run 'TestPostgresProfiles|TestDifferentialClient'
+
+  hammerdb-mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: hammerdb
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -phammerdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    defaults:
+      run:
+        working-directory: hammerdb-tpcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: hammerdb-tpcc/go.sum
+      - name: Run MySQL profiles
+        env:
+          HAMMERDB_MYSQL_URL: root:hammerdb@tcp(localhost:3306)/mysql?parseTime=true
+        run: go test -race -tags=integration ./workload -run 'TestMySQL'
