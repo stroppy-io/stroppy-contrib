@@ -1,0 +1,108 @@
+name: Rolling release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 7 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rolling-release-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+env:
+  STROPPY_MODULE: github.com/stroppy-io/stroppy/v6
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.sdk.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release publication guards
+        run: bash scripts/test-release.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+          cache: false
+      - name: Resolve stable Stroppy v6 once
+        id: sdk
+        shell: bash
+        run: |
+          version=$(go list -m -json "$STROPPY_MODULE@v6" | jq -er '.Version')
+          [[ "$version" =~ ^v6\.[0-9]+\.[0-9]+$ ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    name: ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+          cache: true
+          cache-dependency-path: '**/go.sum'
+      - name: Verify native runner target
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(go env GOHOSTOS)" = "$TARGET_OS"
+          test "$(go env GOHOSTARCH)" = "$TARGET_ARCH"
+      - name: Build, export, and verify collection
+        shell: bash
+        env:
+          STROPPY_VERSION: ${{ needs.resolve.outputs.version }}
+        run: bash scripts/build-release.sh "$STROPPY_VERSION" "$RUNNER_TEMP/release-dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stroppy-contrib-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/release-dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [resolve, build]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.repository == 'stroppy-io/stroppy-contrib'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stroppy-contrib-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-dist
+      - name: Update rolling latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STROPPY_VERSION: ${{ needs.resolve.outputs.version }}
+        run: bash scripts/publish-release.sh "$RUNNER_TEMP/release-dist"
